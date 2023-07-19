@@ -42,7 +42,7 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {
                   return prisma.profile.findMany();
                 },
               },
-              memberType: {
+              memberTypes: {
                 type: new GraphQLList(MemberType),
                 resolve: () => {
                   return prisma.memberType.findMany();
