@@ -277,6 +277,51 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {
                 });
               },
             },
+
+            deleteUser: {
+              type: GraphQLBoolean,
+              args: {
+                id: {
+                  type: new GraphQLNonNull(UUIDType),
+                },
+              },
+
+              resolve: async (_, { id }: { id: UUID }) => {
+                return !!(await prisma.user.delete({
+                  where: { id },
+                }));
+              },
+            },
+
+            deletePost: {
+              type: GraphQLBoolean,
+              args: {
+                id: {
+                  type: new GraphQLNonNull(UUIDType),
+                },
+              },
+
+              resolve: async (_, { id }: { id: UUID }) => {
+                return !!(await prisma.post.delete({
+                  where: { id },
+                }));
+              },
+            },
+
+            deleteProfile: {
+              type: GraphQLBoolean,
+              args: {
+                id: {
+                  type: new GraphQLNonNull(UUIDType),
+                },
+              },
+
+              resolve: async (_, { id }: { id: UUID }) => {
+                return !!(await prisma.profile.delete({
+                  where: { id },
+                }));
+              },
+            },
           }),
         }),
       });
@@ -297,5 +342,4 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {
     },
   });
 };
-
 export default plugin;
