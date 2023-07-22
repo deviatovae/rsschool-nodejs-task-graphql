@@ -20,10 +20,13 @@ import {
   GraphQLInt,
   GraphQLString,
 } from 'graphql/index.js';
-import { User, Profile } from '@prisma/client';
+import { Profile, User } from '@prisma/client';
 import depthLimit from 'graphql-depth-limit';
 import { MemberTypeId as GraphQLMemberTypeId } from './types/member-type-id.js';
 import { MemberTypeId } from '../member-types/schemas.js';
+import { CreateUserInput } from './types/create-user-input.js';
+import { CreatePostInput } from './types/create-post-input.js';
+import { CreateProfileInput } from './types/create-profile-input.js';
 
 const plugin: FastifyPluginAsyncTypebox = async (fastify) => {
   const { prisma } = fastify;
@@ -125,6 +128,7 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {
         200: gqlResponseSchema,
       },
     },
+
     async handler(req) {
       const source = new Source(req.body.query);
       const schema = new GraphQLSchema({
@@ -208,6 +212,68 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {
               resolve: (_source, { id }: { id: UUID }) => {
                 return prisma.profile.findUnique({
                   where: { id },
+                });
+              },
+            },
+          }),
+        }),
+
+        mutation: new GraphQLObjectType({
+          name: 'Mutation',
+          fields: () => ({
+            createUser: {
+              type: User as GraphQLObjectType,
+              args: {
+                dto: {
+                  type: new GraphQLNonNull(CreateUserInput),
+                },
+              },
+              resolve: (_, { dto }: { dto: { name: string; balance: number } }) => {
+                return prisma.user.create({
+                  data: dto,
+                });
+              },
+            },
+
+            createPost: {
+              type: Post,
+              args: {
+                dto: {
+                  type: new GraphQLNonNull(CreatePostInput),
+                },
+              },
+              resolve: (
+                _,
+                { dto }: { dto: { authorId: string; content: UUID; title: UUID } },
+              ) => {
+                return prisma.post.create({
+                  data: dto,
+                });
+              },
+            },
+
+            createProfile: {
+              type: Profile,
+              args: {
+                dto: {
+                  type: new GraphQLNonNull(CreateProfileInput),
+                },
+              },
+              resolve: (
+                _,
+                {
+                  dto,
+                }: {
+                  dto: {
+                    userId: string;
+                    isMale: boolean;
+                    memberTypeId: MemberTypeId;
+                    yearOfBirth: number;
+                  };
+                },
+              ) => {
+                return prisma.profile.create({
+                  data: dto,
                 });
               },
             },
