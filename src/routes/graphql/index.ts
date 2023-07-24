@@ -10,8 +10,7 @@ import {
   Source,
   validate,
 } from 'graphql';
-import { Post } from './types/post.js';
-import { MemberType } from './types/member-type.js';
+import { MemberType as GraphQLMemberType } from './types/member-type.js';
 import { UUID } from 'crypto';
 import { UUIDType } from './types/uuid.js';
 import {
@@ -20,7 +19,7 @@ import {
   GraphQLInt,
   GraphQLString,
 } from 'graphql/index.js';
-import { Profile, User } from '@prisma/client';
+import { Post, Profile, User, MemberType } from '@prisma/client';
 import depthLimit from 'graphql-depth-limit';
 import { MemberTypeId as GraphQLMemberTypeId } from './types/member-type-id.js';
 import { MemberTypeId } from '../member-types/schemas.js';
@@ -30,9 +29,103 @@ import { CreateProfileInput } from './types/create-profile-input.js';
 import { ChangePostInput } from './types/change-post-input.js';
 import { ChangeUserInput } from './types/change-user-input.js';
 import { ChangeProfileInput } from './types/change-profile-input.js';
+import DataLoader from 'dataloader';
+import { PostType } from './types/postType.js';
 
 const plugin: FastifyPluginAsyncTypebox = async (fastify) => {
   const { prisma } = fastify;
+
+  const postLoader = new DataLoader<string, Post[]>(async (userIds) => {
+    const posts = await prisma.post.findMany({
+      where: {
+        authorId: {
+          in: [...userIds],
+        },
+      },
+    });
+    const postsMap: { [key: string]: Post[] } = {};
+    posts.forEach((post) => {
+      if (!postsMap[post.authorId]) {
+        postsMap[post.authorId] = [];
+      }
+      postsMap[post.authorId].push(post);
+    });
+    return userIds.map((userId) => postsMap[userId]);
+  });
+
+  const profileLoader = new DataLoader<string, Profile>(async (userIds) => {
+    const profiles = await prisma.profile.findMany({
+      where: {
+        userId: {
+          in: [...userIds],
+        },
+      },
+    });
+    const profilesMap: { [key: string]: Profile } = {};
+    profiles.forEach((profile) => {
+      profilesMap[profile.userId] = profile;
+    });
+    return userIds.map((userId) => profilesMap[userId]);
+  });
+
+  const memberTypeLoader = new DataLoader<string, MemberType>(async (memberTypeIds) => {
+    const memberTypes = await prisma.memberType.findMany({
+      where: {
+        id: {
+          in: [...memberTypeIds],
+        },
+      },
+    });
+    const memberTypesMap: { [key: string]: MemberType } = {};
+    memberTypes.forEach((memberType) => {
+      memberTypesMap[memberType.id] = memberType;
+    });
+    return memberTypeIds.map((memberTypeId) => memberTypesMap[memberTypeId]);
+  });
+
+  const userSubscribedToLoader = new DataLoader<string, User[]>(async (userIds) => {
+    const subscribers = await prisma.user.findMany({
+      where: {
+        subscribedToUser: {
+          some: {
+            subscriberId: {
+              in: [...userIds],
+            },
+          },
+        },
+      },
+    });
+    const subscribersMap: { [key: string]: User[] } = {};
+    subscribers.forEach((subscriber) => {
+      if (!subscribersMap[subscriber.id]) {
+        subscribersMap[subscriber.id] = [];
+      }
+      subscribersMap[subscriber.id].push(subscriber);
+    });
+    return userIds.map((userId) => subscribersMap[userId]);
+  });
+
+  const subscribedToUserLoader = new DataLoader<string, User[]>(async (userIds) => {
+    const subscribers = await prisma.user.findMany({
+      where: {
+        userSubscribedTo: {
+          some: {
+            authorId: {
+              in: [...userIds],
+            },
+          },
+        },
+      },
+    });
+    const subscribersMap: { [key: string]: User[] } = {};
+    subscribers.forEach((subscriber) => {
+      if (!subscribersMap[subscriber.id]) {
+        subscribersMap[subscriber.id] = [];
+      }
+      subscribersMap[subscriber.id].push(subscriber);
+    });
+    return userIds.map((userId) => subscribersMap[userId]);
+  });
 
   const Profile = new GraphQLObjectType({
     name: 'Profile',
@@ -47,13 +140,9 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {
         type: GraphQLInt,
       },
       memberType: {
-        type: MemberType,
-        resolve: (profile: Profile) => {
-          return prisma.memberType.findUnique({
-            where: {
-              id: profile.memberTypeId,
-            },
-          });
+        type: GraphQLMemberType,
+        resolve: async (profile: Profile) => {
+          return await memberTypeLoader.load(profile.memberTypeId);
         },
       },
     }),
@@ -73,50 +162,26 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {
       },
       userSubscribedTo: {
         type: new GraphQLList(User),
-        resolve: (user: User) => {
-          return prisma.user.findMany({
-            where: {
-              subscribedToUser: {
-                some: {
-                  subscriberId: user.id,
-                },
-              },
-            },
-          });
+        resolve: async (user: User) => {
+          return await userSubscribedToLoader.load(user.id);
         },
       },
       subscribedToUser: {
         type: new GraphQLList(User),
-        resolve: (user: User) => {
-          return prisma.user.findMany({
-            where: {
-              userSubscribedTo: {
-                some: {
-                  authorId: user.id,
-                },
-              },
-            },
-          });
+        resolve: async (user: User) => {
+          await subscribedToUserLoader.load(user.id);
         },
       },
       profile: {
         type: Profile,
-        resolve: (user: User) => {
-          return prisma.profile.findUnique({
-            where: {
-              userId: user.id,
-            },
-          });
+        resolve: async (user: User) => {
+          return await profileLoader.load(user.id);
         },
       },
       posts: {
-        type: new GraphQLList(Post),
-        resolve: (user: User) => {
-          return prisma.post.findMany({
-            where: {
-              authorId: user.id,
-            },
-          });
+        type: new GraphQLList(PostType),
+        resolve: async (user: User) => {
+          return await postLoader.load(user.id);
         },
       },
     }),
@@ -145,7 +210,7 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {
               },
             },
             posts: {
-              type: new GraphQLList(Post),
+              type: new GraphQLList(PostType),
               resolve: () => {
                 return prisma.post.findMany();
               },
@@ -157,7 +222,7 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {
               },
             },
             memberTypes: {
-              type: new GraphQLList(MemberType),
+              type: new GraphQLList(GraphQLMemberType),
               resolve: () => {
                 return prisma.memberType.findMany();
               },
@@ -178,7 +243,7 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {
             },
 
             memberType: {
-              type: MemberType,
+              type: GraphQLMemberType,
               args: {
                 id: {
                   type: new GraphQLNonNull(GraphQLMemberTypeId),
@@ -192,7 +257,7 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {
             },
 
             post: {
-              type: Post,
+              type: PostType,
               args: {
                 id: {
                   type: new GraphQLNonNull(UUIDType),
@@ -239,7 +304,7 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {
             },
 
             createPost: {
-              type: Post,
+              type: PostType,
               args: {
                 dto: {
                   type: new GraphQLNonNull(CreatePostInput),
@@ -346,7 +411,7 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {
             },
 
             changePost: {
-              type: Post,
+              type: PostType,
               args: {
                 id: {
                   type: new GraphQLNonNull(UUIDType),
