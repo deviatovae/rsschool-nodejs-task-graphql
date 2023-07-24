@@ -19,7 +19,7 @@ import {
   GraphQLInt,
   GraphQLString,
 } from 'graphql/index.js';
-import { Post, Profile, User, MemberType } from '@prisma/client';
+import { MemberType, Post, Profile, User } from '@prisma/client';
 import depthLimit from 'graphql-depth-limit';
 import { MemberTypeId as GraphQLMemberTypeId } from './types/member-type-id.js';
 import { MemberTypeId } from '../member-types/schemas.js';
@@ -84,47 +84,55 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {
   });
 
   const userSubscribedToLoader = new DataLoader<string, User[]>(async (userIds) => {
-    const subscribers = await prisma.user.findMany({
-      where: {
-        subscribedToUser: {
-          some: {
-            subscriberId: {
-              in: [...userIds],
-            },
-          },
-        },
-      },
+    const subscribers = await prisma.subscribersOnAuthors.findMany({
+      where: { subscriberId: { in: [...userIds] } },
+      select: { subscriberId: true, author: true },
     });
+
     const subscribersMap: { [key: string]: User[] } = {};
     subscribers.forEach((subscriber) => {
-      if (!subscribersMap[subscriber.id]) {
-        subscribersMap[subscriber.id] = [];
+      if (!subscribersMap[subscriber.subscriberId]) {
+        subscribersMap[subscriber.subscriberId] = [];
       }
-      subscribersMap[subscriber.id].push(subscriber);
+      subscribersMap[subscriber.subscriberId].push(subscriber.author);
     });
-    return userIds.map((userId) => subscribersMap[userId]);
+    return userIds.map((userId) => subscribersMap[userId] || []);
   });
 
   const subscribedToUserLoader = new DataLoader<string, User[]>(async (userIds) => {
-    const subscribers = await prisma.user.findMany({
-      where: {
-        userSubscribedTo: {
-          some: {
-            authorId: {
-              in: [...userIds],
-            },
-          },
-        },
-      },
+    const subscribers = await prisma.subscribersOnAuthors.findMany({
+      where: { authorId: { in: userIds as string[] } },
+      select: { authorId: true, subscriber: true },
     });
+
     const subscribersMap: { [key: string]: User[] } = {};
     subscribers.forEach((subscriber) => {
-      if (!subscribersMap[subscriber.id]) {
-        subscribersMap[subscriber.id] = [];
+      if (!subscribersMap[subscriber.authorId]) {
+        subscribersMap[subscriber.authorId] = [];
       }
-      subscribersMap[subscriber.id].push(subscriber);
+      subscribersMap[subscriber.authorId].push(subscriber.subscriber);
     });
-    return userIds.map((userId) => subscribersMap[userId]);
+    return userIds.map((userId) => subscribersMap[userId] || []);
+  });
+
+  const userLoader = new DataLoader<string, User>(async (userIds) => {
+    const users = await prisma.user.findMany({
+      where: { id: { in: [...userIds] } },
+      include: {
+        userSubscribedTo: true,
+        subscribedToUser: true,
+      },
+    });
+
+    const userMap = users.reduce(
+      (acc, user) => {
+        acc[user.id] = user;
+        return acc;
+      },
+      {} as Record<string, User>,
+    );
+
+    return userIds.map((id) => userMap[id]);
   });
 
   const Profile = new GraphQLObjectType({
@@ -169,7 +177,7 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {
       subscribedToUser: {
         type: new GraphQLList(User),
         resolve: async (user: User) => {
-          await subscribedToUserLoader.load(user.id);
+          return await subscribedToUserLoader.load(user.id);
         },
       },
       profile: {
@@ -205,8 +213,19 @@ const plugin: FastifyPluginAsyncTypebox = async (fastify) => {
           fields: () => ({
             users: {
               type: new GraphQLList(User),
-              resolve: () => {
-                return prisma.user.findMany();
+              resolve: async () => {
+                const users = await prisma.user.findMany({
+                  include: {
+                    userSubscribedTo: true,
+                    subscribedToUser: true,
+                  },
+                });
+
+                users.forEach((user) => {
+                  userLoader.prime(user.id, user);
+                });
+
+                return users;
               },
             },
             posts: {
